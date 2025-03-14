@@ -28,4 +28,5 @@ phpMyAdmin Credentials:
 - Password: admin
 
 Please ensure that you document each step of the process and any configurations made. You may be asked to provide a brief report detailing the steps you took to complete this task.
+
 Full step-by-step documentation: [Google Doc Link](https://docs.google.com/document/d/1Aj8F6UzCGEH8UpkRSsvWXZRpzQ9DgYo7zL3WxyGRUg4/edit?usp=sharing)
