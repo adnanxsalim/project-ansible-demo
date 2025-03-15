@@ -31,7 +31,7 @@ phpMyAdmin Credentials:
 - Username: root
 - Password: Ansible#1
 
-- WordPress Credentials:
+WordPress Credentials:
 - WordPress Admin URL: https://project.adnansal.im/wp-admin
 - Username: admin
 - Password: admin
