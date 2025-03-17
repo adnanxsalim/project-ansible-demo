@@ -1,6 +1,6 @@
 ---
 - name: playbook for project
-  hosts: all
+  hosts: localhost
   tasks:
     - name: Download and Install MySQL repository
       yum:
@@ -12,7 +12,7 @@
       yum:
         name: mysql-community-server
         state: present
-    
+
     - name: Install Python
       yum:
         name: python3-pip
@@ -22,7 +22,7 @@
       pip:
         name: PyMySQL
         executable: pip3
-        
+
     - name: Enable and start MySQL
       systemd:
         name: mysqld
@@ -105,8 +105,32 @@
 
     - name: Configure Nginx project site
       copy:
-        src: project.conf
         dest: /etc/nginx/conf.d/project.conf
+        content: |
+          server {
+            listen 80;
+            server_name adnan.adnansal.im;
+
+            #root /home/project/project/public;
+            #index index.php index.html index.htm;
+
+            location / {
+                root /home/project/project/public;
+                index index.php;
+                try_files $uri $uri/ /index.php?$query_string;
+            }
+
+            location ~ \.php$ {
+                include fastcgi_params;
+                fastcgi_pass unix:/run/php-fpm/www.sock;
+                fastcgi_index index.php;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            }
+
+            location ~ /\.ht {
+                deny all;
+            }
+          }
 
     - name: Restart Nginx and PHP-FPM
       service:
@@ -118,8 +142,14 @@
 
     - name: Configure SFTP access
       copy:
-        src: sftp.conf
         dest: /etc/ssh/sshd_config.d/sftp.conf
+        content: |
+          Match Group sftpusers
+              ChrootDirectory %h
+              ForceCommand internal-sftp
+              AllowTcpForwarding no
+              X11Forwarding no
+              PasswordAuthentication yes
 
     - name: Restart SSH service
       systemd:
@@ -168,13 +198,40 @@
 
     - name: Configure Nginx for phpMyAdmin
       copy:
-        src: phpmyadmin.conf
         dest: /etc/nginx/conf.d/phpmyadmin.conf
+        content: |
+          server {
+            listen 80;
+            server_name adnan.adnansal.im;
+
+            location /phpmyadmin {
+                root /home/project/project/public;
+                index index.php;
+                try_files $uri $uri/ /index.php;
+            }
+
+            location ~ ^/phpmyadmin/(.+\.php)$ {
+                root /home/project/project/public;
+                fastcgi_pass unix:/run/php-fpm/www.sock;
+                fastcgi_index index.php;
+                include fastcgi.conf;
+            }
+          }
 
     - name: Restart Nginx
       systemd:
         name: nginx
         state: restarted
+
+    #- name: Download and extract WordPress
+    #  unarchive:
+    #    src: https://wordpress.org/latest.tar.gz
+    #    dest: /home/project/project/public/
+    #    remote_src: yes
+    #    extra_opts:
+    #      - --strip-components=1
+    #    creates: /home/project/project/public/index.php
+    #  ignore_errors: yes
 
     - name: Download and extract WordPress
       shell: >
@@ -182,42 +239,66 @@
         wget https://wordpress.org/latest.tar.gz &&
         tar -xzf latest.tar.gz &&
         mv wordpress/* . &&
-        rm -rf wordpress latest.tar.gz
-      ignore_errors: yes
-      #unarchive:
-      #  src: https://wordpress.org/latest.tar.gz
-      #  dest: /home/project/project/public/
-      #  remote_src: yes
-      #  extra_opts:
-      #    - --strip-components=1
+        rm -rf wordpress latest.tar.gz wp-config-sample.php
+      args:
+        creates: /home/project/project/public/index.php
 
-    #- name: Get MySQL temporary root password
-    #  shell: grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}'
-    #  register: mysql_temp_password
-    #  changed_when: false
+    - name: Change file permissions
+      file:
+        path: /home/project/project/public
+        state: directory
+        owner: project
+        group: project
+        mode: '0755'
+        recurse: yes
+
     - name: Update mysql configuration file
       copy:
-        src: mysql.conf
         dest: /etc/my.cnf
+        content: |
+          # For advice on how to change settings please see
+          # http://dev.mysql.com/doc/refman/8.4/en/server-configuration-defaults.html
 
-    - name: Set new root password
-      community.mysql.mysql_user:
-        login_user: root
-        login_password: "Ansible#1"
-        user: root
-        password: "Ansible#1"
-        host: localhost
-        state: present
+          [mysqld]
+          mysql_native_password=ON
+          #
+          # Remove leading # and set to the amount of RAM for the most important data
+          # cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
+          # innodb_buffer_pool_size = 128M
+          #
+          # Remove the leading "# " to disable binary logging
+          # Binary logging captures changes between backups and is enabled by
+          # default. It's default setting is log_bin=binlog
+          # disable_log_bin
+          #
+          # Remove leading # to set options mainly useful for reporting servers.
+          # The server defaults are faster for transactions and fast SELECTs.
+          # Adjust sizes as needed, experiment to find the optimal values.
+          # join_buffer_size = 128M
+          # sort_buffer_size = 2M
+          # read_rnd_buffer_size = 2M
+
+          datadir=/var/lib/mysql
+          socket=/var/lib/mysql/mysql.sock
+
+          log-error=/var/log/mysqld.log
+          pid-file=/var/run/mysqld/mysqld.pid
+
+    - name: Restart mysqld
+      service:
+        name: mysqld
+        state: restarted
+
+    - name: Get MySQL temporary root password
+      shell: sudo grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}'
+      register: mysql_temp_password
+      changed_when: false
+
+    - name: Update MySQL root password
+      shell: >
+        mysqladmin --user=root --password="{{ mysql_temp_password.stdout }}"
+        password "Ansible#1"
       ignore_errors: yes
-
-    #- name: Create ~/.my.cnf for root user
-    #  copy:
-    #    dest: /root/.my.cnf
-    #    content: |
-    #      [client]
-    #      user=root
-    #      password=Ansible#1
-    #    mode: '0600'
 
     - name: Configure MySQL database and user
       community.mysql.mysql_db:
@@ -241,10 +322,112 @@
         name: nginx
         state: restarted
 
+    - name: Fetch random salts for WordPress config
+      command: curl https://api.wordpress.org/secret-key/1.1/salt/
+      register: "wp_salt"
+
     - name: Generate wp-config.php
       copy:
-        src: wp-config.php
         dest: /home/project/project/public/wp-config.php
+        content: |
+          <?php
+          /**
+            * The base configuration for WordPress
+            *
+            * The wp-config.php creation script uses this file during the installation.
+            * You don't have to use the website, you can copy this file to "wp-config.php"
+            * and fill in the values.
+            *
+            * This file contains the following configurations:
+            *
+            * * Database settings
+            * * Secret keys
+            * * Database table prefix
+            * * ABSPATH
+            *
+            * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/
+            *
+            * @package WordPress
+            */
+
+          // ** Database settings - You can get this info from your web host ** //
+          /** The name of the database for WordPress */
+          define( 'DB_NAME', 'wordpress' );
+
+          /** Database username */
+          define( 'DB_USER', 'wpuser' );
+
+          /** Database password */
+          define( 'DB_PASSWORD', 'WPUser#1' );
+
+          /** Database hostname */
+          define( 'DB_HOST', 'localhost' );
+
+          /** Database charset to use in creating database tables. */
+          define( 'DB_CHARSET', 'utf8mb4' );
+
+          /** The database collate type. Don't change this if in doubt. */
+          define( 'DB_COLLATE', '' );
+
+          /**#@+
+            * Authentication unique keys and salts.
+            *
+            * Change these to different unique phrases! You can generate these using
+            * the {@link https://api.wordpress.org/secret-key/1.1/salt/ WordPress.org secret-key service}.
+            *
+            * You can change these at any point in time to invalidate all existing cookies.
+            * This will force all users to have to log in again.
+            *
+            * @since 2.6.0
+            */
+
+          {{ wp_salt.stdout }}
+
+          /**#@-*/
+
+          /**
+            * WordPress database table prefix.
+            *
+            * You can have multiple installations in one database if you give each
+            * a unique prefix. Only numbers, letters, and underscores please!
+            *
+            * At the installation time, database tables are created with the specified prefix.
+            * Changing this value after WordPress is installed will make your site think
+            * it has not been installed.
+            *
+            * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/#table-prefix
+            */
+          $table_prefix = 'wp_';
+
+          /**
+            * For developers: WordPress debugging mode.
+            *
+            * Change this to true to enable the display of notices during development.
+            * It is strongly recommended that plugin and theme developers use WP_DEBUG
+            * in their development environments.
+            *
+            * For information on other constants that can be used for debugging,
+            * visit the documentation.
+            *
+            * @link https://developer.wordpress.org/advanced-administration/debug/debug-wordpress/
+            */
+          define( 'WP_DEBUG', false );
+
+          /* Add any custom values between this line and the "stop editing" line. */
+
+
+
+          /* That's all, stop editing! Happy publishing. */
+
+          /** Absolute path to the WordPress directory. */
+          if ( ! defined( 'ABSPATH' ) ) {
+              define( 'ABSPATH', __DIR__ . '/' );
+          }
+
+          /** Sets up WordPress vars and included files. */
+          require_once ABSPATH . 'wp-settings.php';
+        owner: project
+        group: project
 
     - name: Reload nginx
       service:
@@ -255,3 +438,14 @@
       service:
         name: nginx
         state: restarted
+
+    #- name: Install Certbot
+    #  yum:
+    #    name: "{{ item }}"
+    #    state: present
+    #  loop:
+    #    - certbot
+    #    - python3-certbot-nginx
+
+    #- name: Generate SSL Certificate using Let's Encrypt
+    #  command: certbot --nginx -d adnan.adnansal.im --agree-tos --email adnanzabdi@outlook.com --non-interactive
