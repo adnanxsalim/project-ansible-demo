@@ -12,6 +12,7 @@
       yum:
         name: mysql-community-server
         state: present
+      register: mysql_installation
 
     - name: Install Python
       yum:
@@ -24,47 +25,24 @@
         executable: pip3
 
     - name: Enable and start MySQL
-      systemd:
+      service:
         name: mysqld
         enabled: yes
         state: started
 
-    #- name: Secure MySQL installation
-    #  mysql_user:
-    #    login_user: root
-    #    login_password: "&A3uOiMOWgXw"
-    #    name: root
-    #    password: "Ansible#1"
-    #    state: present
-
-    #- name: Remove anonymous MySQL users
-    #  mysql_user:
-    #    name: ""
-    #    host_all: yes
-    #    state: absent
-
-    #- name: Remove MySQL test database
-    #  mysql_db:
-    #    name: test
-    #    state: absent
-
-    #- name: Reload MySQL privilege tables
-    #  command: mysql -u root -pAnsible#1 -e "FLUSH PRIVILEGES;"
-
     - name: Install PHP and required extensions
       yum:
-        name:
-          - php
-          - php-fpm
-          - php-mysqlnd
-          - php-cli
-          - php-common
-          - php-json
-          - php-opcache
-          - php-mbstring
-          - php-xml
-          - php-curl
+        name: "{{ item }}"
         state: present
+      loop:
+        - php8.3
+        - php8.3-fpm
+        - php8.3-mysqlnd
+        - php8.3-cli
+        - php8.3-common
+        - php8.3-opcache
+        - php8.3-mbstring
+        - php8.3-xml
 
     - name: Enable and start PHP-FPM
       service:
@@ -88,14 +66,13 @@
         name: project
         password: "{{ 'project' | password_hash('sha512') }}"
 
-    - name: Create project directory structure
+    - name: Create project/public directory structure
       file:
         path: /home/project/project/public
         state: directory
         owner: project
         group: project
         mode: '0755'
-        recurse: yes
 
     - name: Enable SELinux HTTP home directory access
       seboolean:
@@ -103,44 +80,7 @@
         state: yes
         persistent: yes
 
-    - name: Configure Nginx project site
-      copy:
-        dest: /etc/nginx/conf.d/project.conf
-        content: |
-          server {
-            listen 80;
-            server_name adnan.adnansal.im;
-
-            #root /home/project/project/public;
-            #index index.php index.html index.htm;
-
-            location / {
-                root /home/project/project/public;
-                index index.php;
-                try_files $uri $uri/ /index.php?$query_string;
-            }
-
-            location ~ \.php$ {
-                include fastcgi_params;
-                fastcgi_pass unix:/run/php-fpm/www.sock;
-                fastcgi_index index.php;
-                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-            }
-
-            location ~ /\.ht {
-                deny all;
-            }
-          }
-
-    - name: Restart Nginx and PHP-FPM
-      service:
-        name: "{{ item }}"
-        state: restarted
-      loop:
-        - nginx
-        - php-fpm
-
-    - name: Configure SFTP access
+    - name: Create SFTP configuration file
       copy:
         dest: /etc/ssh/sshd_config.d/sftp.conf
         content: |
@@ -152,22 +92,22 @@
               PasswordAuthentication yes
 
     - name: Restart SSH service
-      systemd:
+      service:
         name: sshd
         state: restarted
 
-    - name: Create SFTP user group and assign project user
+    - name: Create sftpusers group
       group:
         name: sftpusers
         state: present
 
-    - name: Add project user to sftpusers group
+    - name: Add project user to sftpusers & nginx groups
       user:
         name: project
         groups: [ sftpusers, nginx ]
         append: yes
 
-    - name: Set permissions for SFTP directories
+    - name: Set permissions for /home/project for SFTP
       file:
         path: /home/project
         state: directory
@@ -175,7 +115,7 @@
         group: sftpusers
         mode: '0755'
 
-    - name: Set permissions for project public directory
+    - name: Set permissions for project/public directory
       file:
         path: /home/project/project/public
         state: directory
@@ -195,62 +135,6 @@
       args:
         removes: /home/project/project/public/phpMyAdmin-5.2.2-all-languages/
         creates: /home/project/project/public/phpmyadmin/
-
-    - name: Configure Nginx for phpMyAdmin
-      copy:
-        dest: /etc/nginx/conf.d/phpmyadmin.conf
-        content: |
-          server {
-            listen 80;
-            server_name adnan.adnansal.im;
-
-            location /phpmyadmin {
-                root /home/project/project/public;
-                index index.php;
-                try_files $uri $uri/ /index.php;
-            }
-
-            location ~ ^/phpmyadmin/(.+\.php)$ {
-                root /home/project/project/public;
-                fastcgi_pass unix:/run/php-fpm/www.sock;
-                fastcgi_index index.php;
-                include fastcgi.conf;
-            }
-          }
-
-    - name: Restart Nginx
-      systemd:
-        name: nginx
-        state: restarted
-
-    #- name: Download and extract WordPress
-    #  unarchive:
-    #    src: https://wordpress.org/latest.tar.gz
-    #    dest: /home/project/project/public/
-    #    remote_src: yes
-    #    extra_opts:
-    #      - --strip-components=1
-    #    creates: /home/project/project/public/index.php
-    #  ignore_errors: yes
-
-    - name: Download and extract WordPress
-      shell: >
-        cd /home/project/project/public/ &&
-        wget https://wordpress.org/latest.tar.gz &&
-        tar -xzf latest.tar.gz &&
-        mv wordpress/* . &&
-        rm -rf wordpress latest.tar.gz wp-config-sample.php
-      args:
-        creates: /home/project/project/public/index.php
-
-    - name: Change file permissions
-      file:
-        path: /home/project/project/public
-        state: directory
-        owner: project
-        group: project
-        mode: '0755'
-        recurse: yes
 
     - name: Update mysql configuration file
       copy:
@@ -293,12 +177,14 @@
       shell: sudo grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}'
       register: mysql_temp_password
       changed_when: false
+      when: mysql_installation.changed
 
     - name: Update MySQL root password
       shell: >
         mysqladmin --user=root --password="{{ mysql_temp_password.stdout }}"
         password "Ansible#1"
       ignore_errors: yes
+      when: mysql_installation.changed
 
     - name: Configure MySQL database and user
       community.mysql.mysql_db:
@@ -306,6 +192,7 @@
         login_password: "Ansible#1"
         name: wordpress
         state: present
+      when: mysql_installation.changed
 
     - name: Create WordPress user in MySQL
       community.mysql.mysql_user:
@@ -316,136 +203,174 @@
         priv: 'wordpress.*:ALL'
         host: localhost
         state: present
+      when: mysql_installation.changed
 
-    - name: Restart Nginx
-      systemd:
-        name: nginx
-        state: restarted
+    - name: Download WP-CLI
+      get_url:
+        url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+        dest: /usr/local/bin/wp
+        mode: '0755'
 
-    - name: Fetch random salts for WordPress config
-      command: curl https://api.wordpress.org/secret-key/1.1/salt/
-      register: "wp_salt"
+    - name: Download WordPress
+      command: sudo wp core download --path=/home/project/project/public --locale=en_US --allow-root
 
-    - name: Generate wp-config.php
+    - name: Configure WordPress
+      command: sudo wp config create --path=/home/project/project/public --dbname=wordpress --dbuser=wpuser --dbpass=WPUser#1 --dbhost=localhost --dbprefix=wp_ --allow-root
+
+    - name: Install WordPress
+      command: sudo wp core install --path=/home/project/project/public --url=http://adnan.adnansal.im --title=WordPress_with_Ansible --admin_user=adnan --admin_email=adnanzabdi@outlook.com --admin_password=adnan --allow-root
+      ignore_errors: yes
+
+    - name: Configure Nginx for WordPress and phpMyAdmin
       copy:
-        dest: /home/project/project/public/wp-config.php
+        dest: /etc/nginx/conf.d/project.conf
         content: |
-          <?php
-          /**
-            * The base configuration for WordPress
-            *
-            * The wp-config.php creation script uses this file during the installation.
-            * You don't have to use the website, you can copy this file to "wp-config.php"
-            * and fill in the values.
-            *
-            * This file contains the following configurations:
-            *
-            * * Database settings
-            * * Secret keys
-            * * Database table prefix
-            * * ABSPATH
-            *
-            * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/
-            *
-            * @package WordPress
-            */
+          server {
+            listen 80;
+            listen [::]:80;
+            server_name adnan.adnansal.im;
 
-          // ** Database settings - You can get this info from your web host ** //
-          /** The name of the database for WordPress */
-          define( 'DB_NAME', 'wordpress' );
+            root /home/project/project/public;
+            index index.php index.html index.htm;
 
-          /** Database username */
-          define( 'DB_USER', 'wpuser' );
+            location / {
+                try_files $uri $uri/ /index.php?$query_string;
+            }
 
-          /** Database password */
-          define( 'DB_PASSWORD', 'WPUser#1' );
+            location ~ \.php$ {
+                include fastcgi_params;
+                fastcgi_pass unix:/run/php-fpm/www.sock;
+                fastcgi_index index.php;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            }
 
-          /** Database hostname */
-          define( 'DB_HOST', 'localhost' );
+            location ~ /\.ht {
+                deny all;
+            }
 
-          /** Database charset to use in creating database tables. */
-          define( 'DB_CHARSET', 'utf8mb4' );
+            location /phpmyadmin {
+                root /home/project/project/public;
+                index index.php;
+                try_files $uri $uri/ /index.php;
+            }
 
-          /** The database collate type. Don't change this if in doubt. */
-          define( 'DB_COLLATE', '' );
-
-          /**#@+
-            * Authentication unique keys and salts.
-            *
-            * Change these to different unique phrases! You can generate these using
-            * the {@link https://api.wordpress.org/secret-key/1.1/salt/ WordPress.org secret-key service}.
-            *
-            * You can change these at any point in time to invalidate all existing cookies.
-            * This will force all users to have to log in again.
-            *
-            * @since 2.6.0
-            */
-
-          {{ wp_salt.stdout }}
-
-          /**#@-*/
-
-          /**
-            * WordPress database table prefix.
-            *
-            * You can have multiple installations in one database if you give each
-            * a unique prefix. Only numbers, letters, and underscores please!
-            *
-            * At the installation time, database tables are created with the specified prefix.
-            * Changing this value after WordPress is installed will make your site think
-            * it has not been installed.
-            *
-            * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/#table-prefix
-            */
-          $table_prefix = 'wp_';
-
-          /**
-            * For developers: WordPress debugging mode.
-            *
-            * Change this to true to enable the display of notices during development.
-            * It is strongly recommended that plugin and theme developers use WP_DEBUG
-            * in their development environments.
-            *
-            * For information on other constants that can be used for debugging,
-            * visit the documentation.
-            *
-            * @link https://developer.wordpress.org/advanced-administration/debug/debug-wordpress/
-            */
-          define( 'WP_DEBUG', false );
-
-          /* Add any custom values between this line and the "stop editing" line. */
-
-
-
-          /* That's all, stop editing! Happy publishing. */
-
-          /** Absolute path to the WordPress directory. */
-          if ( ! defined( 'ABSPATH' ) ) {
-              define( 'ABSPATH', __DIR__ . '/' );
+            location ~ ^/phpmyadmin/(.+\.php)$ {
+                root /home/project/project/public;
+                fastcgi_pass unix:/run/php-fpm/www.sock;
+                fastcgi_index index.php;
+                include fastcgi.conf;
+            }
           }
 
-          /** Sets up WordPress vars and included files. */
-          require_once ABSPATH . 'wp-settings.php';
-        owner: project
-        group: project
+    - name: Update nginx.conf
+      copy:
+        dest: /etc/nginx/nginx.conf
+        content: |
+          # For more information on configuration, see:
+          #   * Official English Documentation: http://nginx.org/en/docs/
+          #   * Official Russian Documentation: http://nginx.org/ru/docs/
 
-    - name: Reload nginx
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log notice;
+          pid /run/nginx.pid;
+
+          # Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
+          include /usr/share/nginx/modules/*.conf;
+
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                                '$status $body_bytes_sent "$http_referer" '
+                                '"$http_user_agent" "$http_x_forwarded_for"';
+
+              access_log  /var/log/nginx/access.log  main;
+
+              sendfile            on;
+              tcp_nopush          on;
+              keepalive_timeout   65;
+              types_hash_max_size 4096;
+
+              include             /etc/nginx/mime.types;
+              default_type        application/octet-stream;
+
+              # Load modular configuration files from the /etc/nginx/conf.d directory.
+              # See http://nginx.org/en/docs/ngx_core_module.html#include
+              # for more information.
+              include /etc/nginx/conf.d/*.conf;
+
+              server {
+                  listen       80;
+                  listen       [::]:80;
+                  server_name  _;
+                  root         /home/project/project/public;
+
+                  # Load configuration files for the default server block.
+                  include /etc/nginx/default.d/*.conf;
+
+                  error_page 404 /404.html;
+                  location = /404.html {
+                  }
+
+                  error_page 500 502 503 504 /50x.html;
+                  location = /50x.html {
+                  }
+              }
+
+          # Settings for a TLS enabled server.
+          #
+          #    server {
+          #        listen       443 ssl;
+          #        listen       [::]:443 ssl;
+          #        http2        on;
+          #        server_name  _;
+          #        root         /usr/share/nginx/html;
+          #
+          #        ssl_certificate "/etc/pki/nginx/server.crt";
+          #        ssl_certificate_key "/etc/pki/nginx/private/server.key";
+          #        ssl_session_cache shared:SSL:1m;
+          #        ssl_session_timeout  10m;
+          #        ssl_ciphers PROFILE=SYSTEM;
+          #        ssl_prefer_server_ciphers on;
+          #
+          #        # Load configuration files for the default server block.
+          #        include /etc/nginx/default.d/*.conf;
+          #
+          #        error_page 404 /404.html;
+          #        location = /404.html {
+          #        }
+          #
+          #        error_page 500 502 503 504 /50x.html;
+          #        location = /50x.html {
+          #        }
+          #    }
+          }
+
+    - name: Reload Nginx
       service:
         name: nginx
         state: reloaded
 
-    - name: Restart nginx
+    - name: Restart Nginx and PHP-FPM
       service:
-        name: nginx
+        name: "{{ item }}"
         state: restarted
+      loop:
+        - php-fpm
+        - nginx
 
-    #- name: Install Certbot
-    #  yum:
-    #    name: "{{ item }}"
-    #    state: present
-    #  loop:
-    #    - certbot
-    #    - python3-certbot-nginx
+    - name: Install Certbot and its dependency
+      yum:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - certbot
+        - python3-certbot-nginx
+      register: certbot_installation
 
-    #- name: Generate SSL Certificate using Let's Encrypt
-    #  command: certbot --nginx -d adnan.adnansal.im --agree-tos --email adnanzabdi@outlook.com --non-interactive
+    - name: Generate SSL Certificate using Let's Encrypt
+      command: certbot --nginx -d adnan.adnansal.im --agree-tos --email adnanzabdi@outlook.com --non-interactive
+      when: certbot_installation.changed
