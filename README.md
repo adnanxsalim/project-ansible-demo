@@ -1,4 +1,4 @@
-# Ansible demo project
+# Project: WordPress on LEMP stack using Ansible.
 
 Complete step-by-step documentation: [Google Docs Link](https://docs.google.com/document/d/1Aj8F6UzCGEH8UpkRSsvWXZRpzQ9DgYo7zL3WxyGRUg4/edit?usp=sharing)
 
