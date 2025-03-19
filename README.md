@@ -2,12 +2,6 @@
 
 Complete step-by-step documentation: [Google Docs Link](https://docs.google.com/document/d/1Aj8F6UzCGEH8UpkRSsvWXZRpzQ9DgYo7zL3WxyGRUg4/edit?usp=sharing)
 
-Install Ansible first and complete the user configuration (ssh access and sudo privileges).
-
-Add IP and alias to the /etc/hosts file. Example: "13.233.208.97 client" (for easy remembrance).
-
-Go to https://api.wordpress.org/secret-key/1.1/salt/ to generate WordPress auth keys and salt keys. Copy and paste into the wp-config.php file in this repo before running the playbook.
-
 Test instructions:
 1. Install the necessary packages, which include MySQL 10.6, PHP version 8 or higher, and Nginx on your Linux server.
 2. Create a user's home directory under the '/home' directory. You should set the root directory for the website to be '/home/username/websitename/public.'
